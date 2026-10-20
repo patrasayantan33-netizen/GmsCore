@@ -50,12 +50,32 @@ public class MediaRouterCallbackImpl extends IMediaRouterCallback.Stub {
     @Override
     public void onRouteSelected(String routeId, Bundle extras) throws RemoteException {
         CastDevice castDevice = CastDevice.getFromBundle(extras);
+        if (castDevice == null) {
+            Log.w(TAG, "Selected route " + routeId + " is not a cast device");
+            return;
+        }
+        if (this.castContext.defaultSessionProvider == null) {
+            Log.w(TAG, "No session provider registered for ");
+            return;
+        }
+
+        SessionImpl currentSession = this.castContext.getSessionManagerImpl().getCurrentSessionImpl();
+        if (currentSession != null && routeId != null && routeId.equals(currentSession.getRouteId())
+                && (currentSession.isConnecting() || currentSession.isConnected())) {
+            Log.d(TAG, "Route " + routeId + " is already used by the current session");
+            return;
+        }
 
         SessionImpl session = (SessionImpl) ObjectWrapper.unwrap(this.castContext.defaultSessionProvider.getSession(null));
-        Bundle routeInfoExtras = this.castContext.getRouter().getRouteInfoExtrasById(routeId);
-        if (routeInfoExtras != null) {
-            session.start(this.castContext, castDevice, routeId, routeInfoExtras);
+        if (session == null) {
+            Log.w(TAG, "Session provider did not create a session");
+            return;
         }
+        Bundle routeInfoExtras = this.castContext.getRouter().getRouteInfoExtrasById(routeId);
+        if (routeInfoExtras == null) {
+            routeInfoExtras = extras == null ? new Bundle() : extras;
+        }
+        session.start(this.castContext, castDevice, routeId, routeInfoExtras);
     }
     @Override
     public void unknown(String routeId, Bundle extras) {
@@ -63,6 +83,14 @@ public class MediaRouterCallbackImpl extends IMediaRouterCallback.Stub {
     }
     @Override
     public void onRouteUnselected(String routeId, Bundle extras, int reason) {
-        Log.d(TAG, "unimplemented Method: onRouteUnselected");
+        SessionImpl session = this.castContext.getSessionManagerImpl().getCurrentSessionImpl();
+        if (session == null) {
+            return;
+        }
+        if (routeId != null && !routeId.equals(session.getRouteId())) {
+            return;
+        }
+        Log.d(TAG, "Route " + routeId + " unselected, ending session");
+        session.end(false);
     }
 }

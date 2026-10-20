@@ -11,6 +11,9 @@ apply plugin: 'signing'
 dependencies {
     implementation project(':play-services-cast-framework')
     implementation project(':play-services-base-core')
+    // The cast framework talks to the cast device controller service through the GMS service
+    // broker, see CastDeviceControllerConnector.
+    implementation project(':play-services-basement')
 
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlinVersion"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutineVersion"

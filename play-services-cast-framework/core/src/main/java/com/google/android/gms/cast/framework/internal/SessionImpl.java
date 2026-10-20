@@ -23,8 +23,10 @@ import android.util.Log;
 
 import com.google.android.gms.cast.ApplicationMetadata;
 import com.google.android.gms.cast.CastDevice;
+import com.google.android.gms.cast.framework.CastOptions;
 import com.google.android.gms.cast.framework.ISession;
 import com.google.android.gms.cast.framework.ISessionProxy;
+import com.google.android.gms.common.api.CommonStatusCodes;
 import com.google.android.gms.dynamic.IObjectWrapper;
 import com.google.android.gms.dynamic.ObjectWrapper;
 
@@ -43,7 +45,10 @@ public class SessionImpl extends ISession.Stub {
 
     private boolean mIsConnecting = false;
     private boolean mIsConnected = false;
+    private boolean mIsDisconnecting = false;
+    private boolean mIsDisconnected = false;
     private String routeId = null;
+    private CastConnectionControllerImpl connectionController;
 
     public SessionImpl(String category, String sessionId, ISessionProxy proxy) {
         this.category = category;
@@ -59,13 +64,28 @@ public class SessionImpl extends ISession.Stub {
 
         this.mIsConnecting = true;
         this.mIsConnected = false;
+        this.mIsDisconnecting = false;
+        this.mIsDisconnected = false;
         this.castContext.getSessionManagerImpl().onSessionStarting(this);
-        this.proxy.start(routeInfoExtra);
+        if (this.proxy != null) {
+            this.proxy.start(routeInfoExtra);
+        }
+
+        CastOptions options = this.castContext.getOptions();
+        this.connectionController = new CastConnectionControllerImpl(this.castContext, this, castDevice, routeInfoExtra);
+        this.connectionController.connect();
+        if (options != null && options.getReceiverApplicationId() != null) {
+            this.connectionController.launchApplication(options.getReceiverApplicationId(), options.getLaunchOptions());
+        } else {
+            Log.w(TAG, "No receiver application id configured, not launching an application");
+        }
     }
 
     public void onApplicationConnectionSuccess(ApplicationMetadata applicationMetadata, String applicationStatus, String sessionId, boolean wasLaunched) {
         this.mIsConnecting = false;
         this.mIsConnected = true;
+        this.mIsDisconnected = false;
+        this.sessionId = sessionId;
         this.castContext.getSessionManagerImpl().onSessionStarted(this, sessionId);
         try {
             this.castContext.getRouter().selectRouteById(this.getRouteId());
@@ -77,15 +97,66 @@ public class SessionImpl extends ISession.Stub {
     public void onApplicationConnectionFailure(int statusCode) {
         this.mIsConnecting = false;
         this.mIsConnected = false;
+        this.mIsDisconnected = true;
+        if (this.connectionController != null) {
+            this.connectionController.disconnect();
+            this.connectionController = null;
+        }
+        if (this.castContext != null) {
+            this.castContext.getSessionManagerImpl().onSessionStartFailed(this, statusCode);
+            try {
+                this.castContext.getRouter().selectDefaultRoute();
+            } catch (RemoteException ex) {
+                Log.e(TAG, "Error calling selectDefaultRoute: " + ex.getMessage());
+            }
+        }
         this.routeId = null;
-        this.castContext = null;
         this.castDevice = null;
         this.routeInfoExtra = null;
-        this.castContext.getSessionManagerImpl().onSessionStartFailed(this, statusCode);
-        try {
-            this.castContext.getRouter().selectDefaultRoute();
-        } catch (RemoteException ex) {
-            Log.e(TAG, "Error calling selectDefaultRoute: " + ex.getMessage());
+    }
+
+    /**
+     * Called when the device closed the connection or the receiver application stopped.
+     */
+    public void onDeviceDisconnected() {
+        Log.d(TAG, "Device disconnected, ending session");
+        end(false);
+    }
+
+    /**
+     * Ends this session.
+     *
+     * @param stopCasting whether the receiver application should be stopped.
+     */
+    public void end(boolean stopCasting) {
+        if (this.mIsDisconnecting || this.mIsDisconnected) {
+            return;
+        }
+        this.mIsDisconnecting = true;
+        if (this.castContext != null) {
+            this.castContext.getSessionManagerImpl().onSessionEnding(this);
+        }
+        CastConnectionControllerImpl controller = this.connectionController;
+        this.connectionController = null;
+        if (controller != null) {
+            if (stopCasting && this.sessionId != null) {
+                controller.stopApplication(this.sessionId);
+            }
+            controller.disconnect();
+        }
+        if (this.proxy != null) {
+            try {
+                this.proxy.end(stopCasting);
+            } catch (RemoteException ex) {
+                Log.w(TAG, "Error ending session proxy: " + ex.getMessage());
+            }
+        }
+        this.mIsConnecting = false;
+        this.mIsConnected = false;
+        this.mIsDisconnecting = false;
+        this.mIsDisconnected = true;
+        if (this.castContext != null) {
+            this.castContext.getSessionManagerImpl().onSessionEnded(this, CommonStatusCodes.SUCCESS);
         }
     }
 
@@ -138,14 +209,12 @@ public class SessionImpl extends ISession.Stub {
 
     @Override
     public boolean isDisconnecting() {
-        Log.d(TAG, "unimplemented Method: isDisconnecting");
-        return false;
+        return this.mIsDisconnecting;
     }
 
     @Override
     public boolean isDisconnected() {
-        Log.d(TAG, "unimplemented Method: isDisconnected");
-        return false;
+        return this.mIsDisconnected;
     }
 
     @Override

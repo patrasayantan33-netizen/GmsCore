@@ -71,6 +71,14 @@ public class CastContextImpl extends ICastContext.Stub {
             .addControlCategory(MediaControlIntent.CATEGORY_REMOTE_PLAYBACK)
             .addControlCategory(defaultCategory)
             .build();
+
+        if (this.router != null) {
+            try {
+                this.router.registerMediaRouterCallbackImpl(this.mergedSelector.asBundle(), new MediaRouterCallbackImpl(this));
+            } catch (RemoteException e) {
+                Log.w(TAG, "Could not register media router callback: " + e.getMessage());
+            }
+        }
     }
 
     @Override
